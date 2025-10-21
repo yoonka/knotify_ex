@@ -18,7 +18,7 @@ KnotifyEx requires the `knotify` binary to be installed on your system and avail
 
 ### Installing knotify
 
-Pre-built binaries are available at [TODO: link will be updated](https://github.com/example/releases). Download the appropriate binary for your platform and add it to your system PATH.
+Pre-built binaries are available at [Knotify Binaries](https://github.com/yoonka/knotify/releases/tag/v1.0.2). Download the appropriate binary for your platform, extract, and add it to your system PATH.
 
 Verify installation:
 ```bash
