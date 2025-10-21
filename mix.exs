@@ -1,13 +1,21 @@
 defmodule KnotifyEx.MixProject do
   use Mix.Project
 
+  @version "1.0.0"
+  @source_url "https://github.com/yoonka/knotify_ex.git"
+
   def project do
     [
       app: :knotify_ex,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: description(),
+      package: package(),
+      docs: docs(),
+      name: "KnotifyEx",
+      source_url: @source_url
     ]
   end
 
@@ -23,9 +31,35 @@ defmodule KnotifyEx.MixProject do
     [
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+    ]
+  end
 
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+  defp description do
+    """
+    A fast, reliable file system watcher for Elixir powered by Rust's notify crate.
+    Cross-platform support for Linux (inotify), macOS (FSEvents), and other Unix systems (kqueue).
+    """
+  end
+
+  defp package do
+    [
+      name: "knotify_ex",
+      files: ~w(lib .formatter.exs mix.exs README.md LICENSE),
+      licenses: ["MIT"],
+      links: %{
+        "GitHub" => @source_url
+      },
+      maintainers: ["Your Name"]
+    ]
+  end
+
+  defp docs do
+    [
+      main: "KnotifyEx",
+      extras: ["README.md"],
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      api_reference: false
     ]
   end
 end

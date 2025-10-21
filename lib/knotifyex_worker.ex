@@ -1,5 +1,15 @@
 defmodule KnotifyEx.Worker do
-  @moduledoc false
+  @moduledoc """
+  Internal worker process that manages the knotify binary and handles file system events.
+
+  This module is not part of the public API. You should use the `KnotifyEx` module instead.
+
+  The worker:
+    - Spawns and manages the knotify binary as a port
+    - Parses JSON events from knotify
+    - Manages subscriber processes and event filtering
+    - Handles automatic cleanup when subscribers die
+  """
   use GenServer
   require Logger
 
@@ -189,17 +199,9 @@ defmodule KnotifyEx.Worker do
   end
 
   defp find_executable do
-    # Try to find the binary in the priv directory
-    priv_path = Path.join(File.cwd!(), "bin/knotify")
-    cond do
-      File.exists?(priv_path) ->
-        priv_path
-
-      true ->
-        # Fallback to system path
-        System.find_executable("knotify") ||
-          raise "Could not find knotify binary. Please ensure it's in bin/knotify or system PATH"
-    end
+    # Find knotify binary in system PATH
+    System.find_executable("knotify") ||
+      raise "Could not find knotify binary in system PATH. Please ensure knotify is installed."
   end
 
   defp build_args(state) do
