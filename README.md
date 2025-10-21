@@ -305,6 +305,6 @@ MIT License - see LICENSE file for details.
 ## Credits
 
 KnotifyEx is powered by:
-- [knotify](https://github.com/knotify/knotify) - CLI wrapper around Rust's notify
+- [knotify](https://github.com/yoonka/knotify) - CLI wrapper around Rust's notify
 - [notify](https://github.com/notify-rs/notify) - Cross-platform file system notification library for Rust
 
