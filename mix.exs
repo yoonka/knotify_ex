@@ -55,8 +55,10 @@ defmodule KnotifyEx.MixProject do
 
   defp docs do
     [
-      main: "KnotifyEx",
-      extras: ["README.md"],
+      main: "readme",
+      extras: [
+        "README.md": [title: "Overview"]
+      ],
       source_ref: "v#{@version}",
       source_url: @source_url,
       api_reference: false
