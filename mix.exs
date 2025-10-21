@@ -49,7 +49,7 @@ defmodule KnotifyEx.MixProject do
       links: %{
         "GitHub" => @source_url
       },
-      maintainers: ["Your Name"]
+      maintainers: ["Edwin Nguthiru"]
     ]
   end
 
