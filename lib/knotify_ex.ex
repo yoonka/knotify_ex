@@ -142,13 +142,6 @@ defmodule KnotifyEx do
 
   KnotifyEx requires the `knotify` binary to be installed and available in your system PATH.
 
-  Install it with:
-
-      cargo install knotify
-
-  Or on macOS:
-
-      brew install knotify
 
   ## Performance Tips
 
