@@ -251,6 +251,18 @@ defmodule KnotifyEx do
   end
 
   @doc """
+  Acknowledge an ETF hint batch after adding its paths to bounded intake.
+
+  Start with `protocol: :etf, executable: absolute_path`. A single collector
+  subscribes and receives `{:knotify, watcher, message}` with binary-keyed
+  protocol-v1 maps. `paths` and `rescan` messages carry `batch_id`; acknowledge
+  both. Paths are exact root-relative bytes (Unix) or WTF-8 (Windows).
+  Readiness is replayed to late subscribers. Legacy JSON messages are unchanged.
+  """
+  @spec ack(GenServer.server(), non_neg_integer()) :: :ok | {:error, term()}
+  def ack(watcher, batch_id), do: GenServer.call(watcher, {:ack, batch_id})
+
+  @doc """
   Subscribes the calling process to receive file system events from a watcher.
 
   Once subscribed, your process will receive messages whenever files or directories change
@@ -338,6 +350,8 @@ defmodule KnotifyEx do
   """
   @spec subscribe(watcher(), keyword()) :: :ok
   def subscribe(watcher, opts \\ []) do
+    # Validate in the caller so invalid options do not crash a linked watcher.
+    KnotifyEx.Worker.validate_subscription!(opts)
     GenServer.call(watcher, {:subscribe, self(), opts})
   end
 

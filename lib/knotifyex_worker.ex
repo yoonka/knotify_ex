@@ -19,6 +19,13 @@ defmodule KnotifyEx.Worker do
     :recursive,
     :backend,
     :debounce,
+    :executable,
+    protocol: :json,
+    ready: nil,
+    primary: nil,
+    granted: false,
+    last_batch: -1,
+    pending: %{},
     subscribers: %{}
   ]
 
@@ -44,6 +51,12 @@ defmodule KnotifyEx.Worker do
 
   ## Public API
 
+  @doc false
+  def validate_subscription!(opts) do
+    get_event_filter(opts)
+    :ok
+  end
+
   def start_link(opts, genserver_opts \\ []) do
     GenServer.start_link(__MODULE__, opts, genserver_opts)
   end
@@ -56,6 +69,12 @@ defmodule KnotifyEx.Worker do
     recursive = Keyword.get(opts, :recursive, true)
     backend = Keyword.get(opts, :backend, :auto)
     debounce = Keyword.get(opts, :debounce, 100)
+    protocol = Keyword.get(opts, :protocol, :json)
+
+    unless protocol in [:json, :etf], do: raise(ArgumentError, "protocol must be :json or :etf")
+
+    if protocol == :etf and length(dirs) != 1,
+      do: raise(ArgumentError, "ETF hint mode requires exactly one root")
 
     # Validate directories exist
     case validate_dirs(dirs) do
@@ -65,6 +84,8 @@ defmodule KnotifyEx.Worker do
           recursive: recursive,
           backend: backend,
           debounce: debounce,
+          protocol: protocol,
+          executable: Keyword.get(opts, :executable),
           subscribers: %{}
         }
 
@@ -88,7 +109,42 @@ defmodule KnotifyEx.Worker do
 
   @impl true
   def handle_call({:subscribe, pid, opts}, _from, state) do
+    if state.protocol == :etf and Keyword.has_key?(opts, :events) do
+      {:reply, {:error, :filters_not_supported_in_hint_mode}, state}
+    else
+      if state.protocol == :etf and state.primary not in [nil, pid] do
+        {:reply, {:error, :hint_collector_already_subscribed}, state}
+      else
+        subscribe(pid, opts, state)
+      end
+    end
+  end
+
+  def handle_call({:ack, batch_id}, {pid, _}, %{protocol: :etf} = state) do
+    if state.primary == pid and Map.has_key?(state.pending, batch_id) do
+      :ok = credit(state.port, 1)
+      {:reply, :ok, %{state | pending: Map.delete(state.pending, batch_id)}}
+    else
+      {:reply, {:error, :invalid_acknowledgement}, state}
+    end
+  end
+
+  def handle_call({:ack, _batch_id}, _from, state),
+    do: {:reply, {:error, :not_hint_protocol}, state}
+
+  def handle_call({:unsubscribe, pid}, _from, %{protocol: :etf, primary: pid} = state),
+    do: {:stop, :normal, :ok, state}
+
+  def handle_call({:unsubscribe, pid}, _from, state) do
+    state = remove_subscriber(state, pid)
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:known_dirs, _from, state), do: {:reply, state.dirs, state}
+
+  defp subscribe(pid, opts, state) do
     event_filter = get_event_filter(opts)
+    state = remove_subscriber(state, pid)
 
     # Monitor the subscriber so we can clean up if it dies
     ref = Process.monitor(pid)
@@ -99,21 +155,41 @@ defmodule KnotifyEx.Worker do
         events: event_filter
       })
 
-    {:reply, :ok, %{state | subscribers: subscribers}}
+    state = %{state | subscribers: subscribers}
+    state = if state.protocol == :etf, do: %{state | primary: pid}, else: state
+    if state.ready, do: send(pid, {:knotify, self(), state.ready})
+    {:reply, :ok, grant_initial_credit(state)}
   end
 
   @impl true
-  def handle_call({:unsubscribe, pid}, _from, state) do
-    state = remove_subscriber(state, pid)
-    {:reply, :ok, state}
+  def handle_info({port, {:data, packet}}, %{port: port, protocol: :etf} = state)
+      when is_binary(packet) do
+    case decode_hint(packet) do
+      {:ok, %{"type" => "ready"} = message} ->
+        if state.ready do
+          protocol_error(state, :duplicate_ready)
+        else
+          if state.primary, do: send(state.primary, {:knotify, self(), message})
+          {:noreply, grant_initial_credit(%{state | ready: message})}
+        end
+
+      {:ok, %{"batch_id" => id} = message} ->
+        if state.primary && state.ready && id > state.last_batch && map_size(state.pending) < 4 do
+          send(state.primary, {:knotify, self(), message})
+          {:noreply, %{state | last_batch: id, pending: Map.put(state.pending, id, true)}}
+        else
+          protocol_error(state, :invalid_batch)
+        end
+
+      {:ok, %{"type" => "error"} = message} ->
+        if state.primary, do: send(state.primary, {:knotify, self(), message})
+        {:noreply, state}
+
+      {:error, reason} ->
+        protocol_error(state, reason)
+    end
   end
 
-  @impl true
-  def handle_call(:known_dirs, _from, state) do
-    {:reply, state.dirs, state}
-  end
-
-  @impl true
   def handle_info({port, {:data, {:eol, line}}}, %{port: port} = state) do
     case decode_event(line) do
       {:ok, paths, events} ->
@@ -140,9 +216,9 @@ defmodule KnotifyEx.Worker do
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    # Subscriber process died, clean up
-    state = remove_subscriber(state, pid)
-    {:noreply, state}
+    if state.protocol == :etf and state.primary == pid,
+      do: {:stop, :normal, remove_subscriber(state, pid)},
+      else: {:noreply, remove_subscriber(state, pid)}
   end
 
   @impl true
@@ -154,7 +230,7 @@ defmodule KnotifyEx.Worker do
   @impl true
   def terminate(_reason, state) do
     if state.port do
-      Port.close(state.port)
+      if Port.info(state.port), do: Port.close(state.port)
     end
 
     broadcast_event(state, :stop)
@@ -181,16 +257,20 @@ defmodule KnotifyEx.Worker do
   defp validate_dirs(_), do: {:error, :dirs_must_be_list}
 
   defp start_port(state) do
-    executable = find_executable()
+    executable = state.executable || find_executable()
     args = build_args(state)
+    framing = if state.protocol == :etf, do: [{:packet, 4}], else: [{:line, 1024 * 1024}]
 
     port =
-      Port.open({:spawn_executable, executable}, [
-        :binary,
-        :exit_status,
-        {:line, 1024 * 1024},
-        args: args
-      ])
+      Port.open(
+        {:spawn_executable, executable},
+        [
+          :binary,
+          :exit_status,
+          env: [{~c"KNOTIFY_EXIT_ON_EOF", ~c"1"}],
+          args: args
+        ] ++ framing
+      )
 
     {:ok, port}
   rescue
@@ -225,7 +305,8 @@ defmodule KnotifyEx.Worker do
         ["--path", dir]
       end)
 
-    base_args ++ recursive_args ++ dir_args
+    protocol_args = if state.protocol == :etf, do: ["--protocol", "etf"], else: []
+    base_args ++ recursive_args ++ dir_args ++ protocol_args
   end
 
   defp decode_event(data) do
@@ -271,11 +352,82 @@ defmodule KnotifyEx.Worker do
 
   defp broadcast_event(state, event) do
     Enum.each(state.subscribers, fn {pid, subscriber_info} ->
-      if should_send_event?(event, subscriber_info.events) do
-        send(pid, {:file_event, self(), event})
+      if state.protocol == :etf do
+        if event == :stop, do: send(pid, {:knotify, self(), %{"version" => 1, "type" => "stop"}})
+      else
+        if should_send_event?(event, subscriber_info.events) do
+          send(pid, {:file_event, self(), event})
+        end
       end
     end)
   end
+
+  defp grant_initial_credit(%{protocol: :etf, ready: ready, primary: pid, granted: false} = state)
+       when not is_nil(ready) and is_pid(pid) do
+    :ok = credit(state.port, 4)
+    %{state | granted: true}
+  end
+
+  defp grant_initial_credit(state), do: state
+
+  defp credit(port, count) do
+    true =
+      Port.command(
+        port,
+        :erlang.term_to_binary(%{"version" => 1, "type" => "credit", "count" => count})
+      )
+
+    :ok
+  end
+
+  defp protocol_error(state, reason) do
+    if state.primary do
+      send(
+        state.primary,
+        {:knotify, self(),
+         %{
+           "version" => 1,
+           "type" => "error",
+           "code" => "protocol_error",
+           "message" => inspect(reason)
+         }}
+      )
+    end
+
+    {:stop, {:protocol_error, reason}, state}
+  end
+
+  defp decode_hint(<<131, 80, _::binary>>), do: {:error, :compressed_etf_not_supported}
+
+  defp decode_hint(packet) when byte_size(packet) <= 1_048_576 do
+    try do
+      case :erlang.binary_to_term(packet, [:safe]) do
+        %{"version" => 1, "type" => "ready", "service" => "watcher"} = message ->
+          {:ok, message}
+
+        %{"version" => 1, "type" => "paths", "batch_id" => id, "paths" => paths} = message
+        when is_integer(id) and id >= 0 and is_list(paths) and length(paths) <= 128 ->
+          if Enum.all?(paths, &(is_binary(&1) and byte_size(&1) <= 131_072)),
+            do: {:ok, message},
+            else: {:error, :invalid_paths}
+
+        %{"version" => 1, "type" => "rescan", "batch_id" => id, "reason" => reason} = message
+        when is_integer(id) and id >= 0 and is_binary(reason) ->
+          {:ok, message}
+
+        %{"version" => 1, "type" => "error", "code" => code, "message" => text} = message
+        when is_binary(code) and is_binary(text) ->
+          {:ok, message}
+
+        _ ->
+          {:error, :incompatible_message}
+      end
+    rescue
+      ArgumentError -> {:error, :invalid_etf}
+    end
+  end
+
+  defp decode_hint(_), do: {:error, :packet_too_large}
 
   defp should_send_event?(:stop, _filter), do: true
   defp should_send_event?(_event, :all), do: true

@@ -2,7 +2,10 @@ defmodule KnotifyExTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
 
-  @test_dir "/tmp/knotify_test_#{System.unique_integer([:positive])}"
+  @test_dir Path.join(
+              Path.expand(System.tmp_dir!()),
+              "knotify_test_#{System.unique_integer([:positive])}"
+            )
   @test_file Path.join(@test_dir, "test_file.txt")
 
   setup do
@@ -250,7 +253,7 @@ defmodule KnotifyExTest do
 
       # Create a file (should not receive this event)
       File.write!(@test_file, "content")
-      refute_receive {:file_event, ^watcher, {^file, _}}, 1000
+      refute_receive {:file_event, ^watcher, {@test_file, _}}, 1000
 
       # Create a folder (should receive this event)
       new_dir = Path.join(@test_dir, "filtered_folder")
