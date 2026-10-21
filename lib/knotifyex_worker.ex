@@ -413,7 +413,15 @@ defmodule KnotifyEx.Worker do
 
         %{"version" => 1, "type" => "rescan", "batch_id" => id, "reason" => reason} = message
         when is_integer(id) and id >= 0 and is_binary(reason) ->
-          {:ok, message}
+          case Map.get(message, "paths", []) do
+            paths when is_list(paths) and length(paths) <= 128 ->
+              if Enum.all?(paths, &(is_binary(&1) and byte_size(&1) <= 131_072)),
+                do: {:ok, message},
+                else: {:error, :invalid_rescan_paths}
+
+            _ ->
+              {:error, :invalid_rescan_paths}
+          end
 
         %{"version" => 1, "type" => "error", "code" => code, "message" => text} = message
         when is_binary(code) and is_binary(text) ->

@@ -255,7 +255,8 @@ defmodule KnotifyEx do
 
   Start with `protocol: :etf, executable: absolute_path`. A single collector
   subscribes and receives `{:knotify, watcher, message}` with binary-keyed
-  protocol-v1 maps. `paths` and `rescan` messages carry `batch_id`; acknowledge
+  protocol-v1 maps. Scoped watch errors use `rescan` with an optional `paths`
+  list; rescans without it cover the root. `paths` and `rescan` messages carry `batch_id`; acknowledge
   both. Paths are exact root-relative bytes (Unix) or WTF-8 (Windows).
   Readiness is replayed to late subscribers. Legacy JSON messages are unchanged.
   """

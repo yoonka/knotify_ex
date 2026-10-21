@@ -68,6 +68,53 @@ defmodule KnotifyEx.HintProtocolTest do
     assert_receive {:DOWN, ^monitor, :process, ^watcher, {:protocol_error, _}}, 5_000
   end
 
+  test "scoped watch errors retain paths and participate in acknowledged delivery", %{
+    watcher: watcher
+  } do
+    :ok = KnotifyEx.subscribe(watcher)
+    assert_receive {:knotify, ^watcher, %{"type" => "ready"}}, 5_000
+    port = :sys.get_state(watcher).port
+
+    message = %{
+      "version" => 1,
+      "type" => "rescan",
+      "batch_id" => 0,
+      "reason" => "watch unavailable",
+      "paths" => [<<255, 47, 254>>]
+    }
+
+    send(watcher, {port, {:data, :erlang.term_to_binary(message)}})
+    assert_receive {:knotify, ^watcher, ^message}, 5_000
+    assert :ok = KnotifyEx.ack(watcher, 0)
+  end
+
+  test "malformed scoped error paths produce a structured protocol failure", %{watcher: watcher} do
+    :ok = KnotifyEx.subscribe(watcher)
+    assert_receive {:knotify, ^watcher, %{"type" => "ready"}}, 5_000
+    Process.unlink(watcher)
+    monitor = Process.monitor(watcher)
+    port = :sys.get_state(watcher).port
+
+    send(
+      watcher,
+      {port,
+       {:data,
+        :erlang.term_to_binary(%{
+          "version" => 1,
+          "type" => "rescan",
+          "batch_id" => 0,
+          "reason" => "error",
+          "paths" => [123]
+        })}}
+    )
+
+    assert_receive {:knotify, ^watcher, %{"type" => "error", "code" => "protocol_error"}}, 5_000
+
+    assert_receive {:DOWN, ^monitor, :process, ^watcher,
+                    {:protocol_error, :invalid_rescan_paths}},
+                   5_000
+  end
+
   defp path_received?(watcher, wanted, attempts \\ 20)
   defp path_received?(_, _, 0), do: false
 
