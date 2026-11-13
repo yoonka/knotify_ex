@@ -45,7 +45,7 @@ defmodule KnotifyEx.MixProject do
     [
       name: "knotify_ex",
       files: ~w(lib .formatter.exs mix.exs README.md LICENSE),
-      licenses: ["MIT"],
+      licenses: ["BSD-3-Clause"],
       links: %{
         "GitHub" => @source_url
       },
