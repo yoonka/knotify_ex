@@ -4,7 +4,10 @@ defmodule KnotifyEx.WorkerTest do
 
   alias KnotifyEx.Worker
 
-  @test_dir "/tmp/knotify_worker_test_#{System.unique_integer([:positive])}"
+  @test_dir Path.join(
+              Path.expand(System.tmp_dir!()),
+              "knotify_worker_test_#{System.unique_integer([:positive])}"
+            )
 
   setup do
     # Create test directory
@@ -71,7 +74,9 @@ defmodule KnotifyEx.WorkerTest do
 
     test "adds subscriber to state", %{worker: worker} do
       subscriber_pid = self()
-      {:reply, :ok, new_state} = Worker.handle_call({:subscribe, subscriber_pid, []}, nil, :sys.get_state(worker))
+
+      {:reply, :ok, new_state} =
+        Worker.handle_call({:subscribe, subscriber_pid, []}, nil, :sys.get_state(worker))
 
       assert Map.has_key?(new_state.subscribers, subscriber_pid)
       assert new_state.subscribers[subscriber_pid].events == :all
@@ -79,7 +84,13 @@ defmodule KnotifyEx.WorkerTest do
 
     test "adds subscriber with event filter", %{worker: worker} do
       subscriber_pid = self()
-      {:reply, :ok, new_state} = Worker.handle_call({:subscribe, subscriber_pid, [events: [:create, :modify]]}, nil, :sys.get_state(worker))
+
+      {:reply, :ok, new_state} =
+        Worker.handle_call(
+          {:subscribe, subscriber_pid, [events: [:create, :modify]]},
+          nil,
+          :sys.get_state(worker)
+        )
 
       subscriber_info = new_state.subscribers[subscriber_pid]
       assert MapSet.member?(subscriber_info.events, :create)
@@ -89,7 +100,9 @@ defmodule KnotifyEx.WorkerTest do
 
     test "monitors subscriber process", %{worker: worker} do
       subscriber_pid = spawn(fn -> receive do: (:wait -> :ok) end)
-      {:reply, :ok, new_state} = Worker.handle_call({:subscribe, subscriber_pid, []}, nil, :sys.get_state(worker))
+
+      {:reply, :ok, new_state} =
+        Worker.handle_call({:subscribe, subscriber_pid, []}, nil, :sys.get_state(worker))
 
       subscriber_info = new_state.subscribers[subscriber_pid]
       assert is_reference(subscriber_info.ref)
@@ -160,7 +173,8 @@ defmodule KnotifyEx.WorkerTest do
       ref = state_before.subscribers[subscriber_pid].ref
 
       # Simulate the subscriber process dying
-      {:noreply, new_state} = Worker.handle_info({:DOWN, ref, :process, subscriber_pid, :normal}, state_before)
+      {:noreply, new_state} =
+        Worker.handle_info({:DOWN, ref, :process, subscriber_pid, :normal}, state_before)
 
       refute Map.has_key?(new_state.subscribers, subscriber_pid)
     end
@@ -169,8 +183,8 @@ defmodule KnotifyEx.WorkerTest do
   describe "handle_info port messages" do
     setup do
       {:ok, worker} = Worker.start_link(dirs: [@test_dir])
-      state = :sys.get_state(worker)
       GenServer.call(worker, {:subscribe, self(), []})
+      state = :sys.get_state(worker)
       %{worker: worker, state: state}
     end
 
@@ -184,7 +198,9 @@ defmodule KnotifyEx.WorkerTest do
     end
 
     test "handles multiple paths in event", %{state: state} do
-      json_event = Jason.encode!(%{"kind" => "RENAME", "paths" => ["/tmp/old.txt", "/tmp/new.txt"]})
+      json_event =
+        Jason.encode!(%{"kind" => "RENAME", "paths" => ["/tmp/old.txt", "/tmp/new.txt"]})
+
       port = state.port
 
       {:noreply, _new_state} = Worker.handle_info({port, {:data, {:eol, json_event}}}, state)
@@ -242,8 +258,8 @@ defmodule KnotifyEx.WorkerTest do
   describe "event mapping" do
     setup do
       {:ok, worker} = Worker.start_link(dirs: [@test_dir])
-      state = :sys.get_state(worker)
       GenServer.call(worker, {:subscribe, self(), []})
+      state = :sys.get_state(worker)
       %{worker: worker, state: state}
     end
 

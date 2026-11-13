@@ -1,5 +1,39 @@
 # KnotifyEx
 
+## Lossless hint mode (1.1)
+
+Use the matching knotify 1.1 executable for an acknowledged, bounded hint stream:
+
+```elixir
+{:ok, watcher} = KnotifyEx.start_link(
+  dirs: [root], executable: absolute_knotify_path, protocol: :etf, recursive: true
+)
+:ok = KnotifyEx.subscribe(watcher)
+
+receive do
+  {:knotify, ^watcher, %{"type" => "paths", "batch_id" => id, "paths" => paths}} ->
+    # Add paths to bounded intake; inspect disk and catalog asynchronously.
+    accept_paths(paths)
+    :ok = KnotifyEx.ack(watcher, id)
+  {:knotify, ^watcher, %{"type" => "rescan", "batch_id" => id}} ->
+    schedule_root_rescan()
+    :ok = KnotifyEx.ack(watcher, id)
+end
+```
+
+Only one root and one collector are supported in hint mode; event-type filters
+are not supported. Paths are exact root-relative byte binaries, using WTF-8 on
+Windows. Preserve them as opaque binaries. Readiness (`type: "ready"`) is cached
+and replayed to late subscribers. Registration/protocol errors are structured
+`type: "error"` messages. At most four path/rescan batches may be outstanding;
+acknowledge only after accepting work into bounded intake. Overflow requests a
+root rescan. Restarting a watcher also requires reconciliation.
+
+The default remains legacy JSON and `{:file_event, watcher, {path, events}}`.
+`:executable` also works with the legacy protocol, without changing `PATH`.
+Wrapped native versions supporting `KNOTIFY_EXIT_ON_EOF=1` exit when their port
+closes; older binaries ignore this environment variable.
+
 A fast, reliable file system watcher for Elixir powered by [knotify](https://github.com/knotify/knotify), which wraps Rust's excellent [notify](https://github.com/notify-rs/notify) crate.
 
 KnotifyEx gives you real-time notifications when files and directories change. It's cross-platform, efficient, and works great in development and production environments.
